@@ -597,58 +597,83 @@ SellTab:Toggle({
 local PotionTab = Window:Tab({Title = "Potion"})
 
 PotionTab:Section({ Title = "Buy Potion" })
--- Variables to store your selection
-local selectedPotion = "HealthPotion1" -- Default value
-local buyAmount = 1 -- Default amount
 
-local potionList = {
-    "HealthPotion1", 
-    "MinerPotion1", 
-    "MovementSpeedPotion1", 
-    "LuckPotion1",
-    "AttackDamagePotion1"
+--// Remote references
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local PurchaseRF = ReplicatedStorage
+    :WaitForChild("Shared")
+    :WaitForChild("Packages")
+    :WaitForChild("Knit")
+    :WaitForChild("Services")
+    :WaitForChild("ProximityService")
+    :WaitForChild("RF")
+    :WaitForChild("Purchase")
+
+local ToolActivatedRF = ReplicatedStorage
+    :WaitForChild("Shared")
+    :WaitForChild("Packages")
+    :WaitForChild("Knit")
+    :WaitForChild("Services")
+    :WaitForChild("ToolService")
+    :WaitForChild("RF")
+    :WaitForChild("ToolActivated")
+
+-- Pretty name -> real argument the server expects
+local NameMap = {
+    ["Health Potion 1"] = "HealthPotion1",
+    ["Miner Potion 1"]  = "MinerPotion1",
+    ["Speed Potion 1"]  = "MovementSpeedPotion1",
+    ["Luck Potion 1"]   = "LuckPotion1",
+    ["Damage Potion 1"] = "AttackDamagePotion1",
 }
 
--- 1. THE DROPDOWN (Select Potion)
+-- Build list of internal IDs for buy dropdown from NameMap
+local potionList = {}
+for _, realName in pairs(NameMap) do
+    table.insert(potionList, realName)
+end
+table.sort(potionList)
+
+-- BUY SECTION
+local selectedPotion = "HealthPotion1" -- Default internal ID
+local buyAmount = 1
+
+-- 1. DROPDOWN (Select Potion to buy, uses internal IDs)
 PotionTab:Dropdown({
     Title = "Select Potion",
     Desc = "Choose which potion to buy",
     Values = potionList,
-    Value = "HealthPotion1",
+    Value = selectedPotion,
     Callback = function(option)
         selectedPotion = option
     end
 })
 
--- 2. THE SLIDER (Select Amount)
+-- 2. SLIDER (Amount)
 PotionTab:Slider({
     Title = "Amount",
     Desc = "Select quantity to buy",
     Step = 1,
     Value = {
         Min = 1,
-        Max = 10, -- Change this number if you want to buy more at once
+        Max = 10,
         Default = 1,
     },
     Callback = function(value)
         buyAmount = value
-        -- print("Amount set to: " .. buyAmount)
     end
 })
 
--- 3. THE BUTTON (Buy)
+-- 3. BUTTON (Buy)
 PotionTab:Button({
     Title = "Buy Potion",
     Desc = "Purchase the selected amount",
     Callback = function()
         if selectedPotion and buyAmount > 0 then
-            local args = {
-                selectedPotion,
-                buyAmount
-            }
+            local args = { selectedPotion, buyAmount }
             
             pcall(function()
-                game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Knit"):WaitForChild("Services"):WaitForChild("ProximityService"):WaitForChild("RF"):WaitForChild("Purchase"):InvokeServer(unpack(args))
+                PurchaseRF:InvokeServer(unpack(args))
                 
                 Window:Notify({
                     Title = "Purchased!",
@@ -660,28 +685,26 @@ PotionTab:Button({
     end
 })
 
+------------------------------------------------------------------
+-- USE POTION
+------------------------------------------------------------------
+
 PotionTab:Section({ Title = "Use Potion" })
 
---// Remote reference
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ToolActivatedRF = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Knit"):WaitForChild("Services"):WaitForChild("ToolService"):WaitForChild("RF"):WaitForChild("ToolActivated")
+-- Display options list from NameMap keys
+local displayList = {}
+for displayName, _ in pairs(NameMap) do
+    table.insert(displayList, displayName)
+end
+table.sort(displayList)
 
--- Pretty name -> real argument the server expects
-local NameMap = {
-    ["Miner Potion 1"] = "MinerPotion1",
-    ["Luck Potion 1"] = "LuckPotion1",
-    ["Health Potion 1"] = "HealthPotion1",
-    ["Damage Potion 1"] = "AttackDamagePotion1",
-    ["Speed Potion 1"] = "MovementSpeedPotion1",
-}
-
--- What the user currently has selected (display name)
-local selectedDisplay = "Health Potion"
+-- Default must be a valid display name
+local selectedDisplay = "Health Potion 1"
 
 local Dropdown = PotionTab:Dropdown({
     Title = "Select Item",
     Desc = "Choose which item to activate",
-    Values = { "Miner Potion 1", "Luck Potion 1", "Health Potion 1", "Damage Potion 1", "Speed Potion 1" },
+    Values = displayList,
     Value = selectedDisplay,
     Callback = function(option)
         selectedDisplay = option
@@ -694,13 +717,12 @@ local Button = PotionTab:Button({
     Desc = "Activates the selected item",
     Locked = false,
     Callback = function()
-        local realName = NameMap[selectedDisplay] -- e.g. "HealthPotion1"
+        local realName = NameMap[selectedDisplay]
         if not realName then
             warn("No mapping found for option: " .. tostring(selectedDisplay))
             return
         end
 
-        -- You can pass it directly; no need for args/unpack with a single value
         ToolActivatedRF:InvokeServer(realName)
         print("Invoked ToolActivated with:", realName)
     end
