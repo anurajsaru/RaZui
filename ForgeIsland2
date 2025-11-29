@@ -544,7 +544,7 @@ local selectedItems2 = {}
 
 -- List of items (Used for both dropdowns)
 local items = {
-    "Iron","Gold","Silver","Cobalt","Titanium","Lapis Lazuli","Platinum","Volcanic Rock",
+    "Iron","Gold","Silver","Cobalt","Titanium","Lapis Lazuli","Platinum","Boneite","Dark Boneite","Volcanic Rock",
     "Quartz","Amethyst","Topaz","Diamond","Sapphire","Slimite","Curpite","Obsidian",
     "Emerald","Ruby","Rivalite","Uranium","Mythril","Eye Ore","Fireite",
     "Magmaite","Lightite","Demonite","Darkryte"
