@@ -1,0 +1,14 @@
+local placeId = game.PlaceId
+
+if placeId == 76558904092080 then
+    -- Script for first game
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
+
+elseif placeId == 129009554587176 then
+    -- Script for second game
+    loadstring(game:HttpGet("https://your-second-script-url-here.lua"))()
+
+else
+    -- Optional: do nothing / print
+    print("This script is not configured for this game. PlaceId:", placeId)
+end
