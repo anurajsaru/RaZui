@@ -340,7 +340,7 @@ local function MineLoop(flag, mode)
         local rock = FindNearestOre(mode) -- Uses Nearest Logic
         if rock then
             local rockPivot = rock:GetPivot()
-            local minePos = rockPivot * CFrame.new(0, -7, 0)
+            local minePos = rockPivot * CFrame.new(0, -6, 0)
             minePos = CFrame.lookAt(minePos.Position, rockPivot.Position)
 
             TweenTo(minePos)
