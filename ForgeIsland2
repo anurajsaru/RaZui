@@ -41,18 +41,26 @@ local lp = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 local Debris = Workspace:WaitForChild("Debris")
 local PlayerGui = lp:WaitForChild("PlayerGui")
--- Attempt to get ForgeUI, might not exist yet if fresh spawn
 local ForgeUI = PlayerGui:WaitForChild("Forge", 5) 
 
 local MOVEMENT_SPEED = 65 
 local NoclipConnection = nil
+
+-- HELPER: Check if Alive
+local function IsAlive()
+    local char = lp.Character
+    if not char then return false end
+    local hum = char:FindFirstChild("Humanoid")
+    local root = char:FindFirstChild("HumanoidRootPart")
+    return hum and root and hum.Health > 0
+end
 
 -- 1. NOCLIP
 local function SetNoclip(state)
     if state then
         if not NoclipConnection then
             NoclipConnection = RunService.Stepped:Connect(function()
-                if lp.Character then
+                if IsAlive() then
                     for _, part in pairs(lp.Character:GetDescendants()) do
                         if part:IsA("BasePart") and part.CanCollide == true then
                             part.CanCollide = false
@@ -69,14 +77,14 @@ local function SetNoclip(state)
     end
 end
 
--- 2. FLOAT (For NPCs)
+-- 2. FLOAT
 local function ToggleFloat(state)
-    if not lp.Character or not lp.Character:FindFirstChild("HumanoidRootPart") then return end
+    if not IsAlive() then return end
     local hrp = lp.Character.HumanoidRootPart
-    local hum = lp.Character:FindFirstChild("Humanoid")
+    local hum = lp.Character.Humanoid
 
     if state then
-        if hum then hum.PlatformStand = true end
+        hum.PlatformStand = true
         if not hrp:FindFirstChild("FarmFloat") then
             local bv = Instance.new("BodyVelocity")
             bv.Name = "FarmFloat"
@@ -85,21 +93,38 @@ local function ToggleFloat(state)
             bv.Parent = hrp
         end
     else
-        if hum then hum.PlatformStand = false end
+        hum.PlatformStand = false
         local bv = hrp:FindFirstChild("FarmFloat")
         if bv then bv:Destroy() end
     end
 end
 
--- 3. TWEEN MOVEMENT
+-- 3. DEATH FREEZE (Prevents Void Fall)
+local function ConnectDeathMonitor(char)
+    local hum = char:WaitForChild("Humanoid", 10)
+    if hum then
+        hum.Died:Connect(function()
+            if char:FindFirstChild("HumanoidRootPart") then
+                char.HumanoidRootPart.Anchored = true
+                char.HumanoidRootPart.Velocity = Vector3.zero
+                local bv = char.HumanoidRootPart:FindFirstChild("FarmFloat")
+                if bv then bv:Destroy() end
+            end
+        end)
+    end
+end
+
+if lp.Character then ConnectDeathMonitor(lp.Character) end
+lp.CharacterAdded:Connect(ConnectDeathMonitor)
+
+-- 4. TWEEN MOVEMENT
 local function TweenTo(targetCFrame)
-    if not lp.Character or not lp.Character:FindFirstChild("HumanoidRootPart") then return end
+    if not IsAlive() then return end
+
     local hrp = lp.Character.HumanoidRootPart
-    
     local distance = (hrp.Position - targetCFrame.Position).Magnitude
     local time = distance / MOVEMENT_SPEED
     
-    -- If very close, just snap
     if distance < 5 then
         hrp.CFrame = targetCFrame
         return
@@ -122,10 +147,45 @@ local function TweenTo(targetCFrame)
             ToggleFloat(false)
             break
         end
+        
+        if not IsAlive() then
+            tween:Cancel()
+            break
+        end
+
         task.wait()
     end
     
     if conn then conn:Disconnect() end
+end
+
+-- 5. AUTO CAMERA NOCLIP HELPER
+local function SetCameraNoclip(state)
+    if state then
+        lp.DevCameraOcclusionMode = Enum.DevCameraOcclusionMode.Invisicam
+    else
+        if not _G.AutoFarm and not _G.AutoCaveEnabled and not _G.AutoOreEnabled then
+            lp.DevCameraOcclusionMode = Enum.DevCameraOcclusionMode.Zoom
+        end
+    end
+end
+
+-- 6. SORTING HELPER
+local function SelectFromList(list, priority)
+    if #list == 0 then return nil end
+    
+    if priority == "Random" then
+        return list[math.random(1, #list)].obj
+    elseif priority == "Prioritize Highest MaxHealth" then
+        table.sort(list, function(a, b) return a.maxHp > b.maxHp end)
+        return list[1].obj
+    elseif priority == "Prioritize Lowest MaxHealth" then
+        table.sort(list, function(a, b) return a.maxHp < b.maxHp end)
+        return list[1].obj
+    else -- Default to Nearest
+        table.sort(list, function(a, b) return a.dist < b.dist end)
+        return list[1].obj
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -137,6 +197,7 @@ FarmTab:Select()
 local Section = FarmTab:Section({ Title = "Farm Mobs" })
 
 _G.SelectedNPCs = { "Skeleton Rogue" }
+_G.MobPriority = "Nearest" -- Default
 
 local function GetBaseName(displayName)
     if not displayName then return "" end
@@ -157,12 +218,22 @@ FarmTab:Dropdown({
     end
 })
 
+FarmTab:Dropdown({
+    Title = "Target Priority",
+    Values = { "Nearest", "Random", "Prioritize Highest MaxHealth", "Prioritize Lowest MaxHealth" },
+    Value = "Nearest",
+    Callback = function(v) 
+        _G.MobPriority = v 
+    end
+})
+
 FarmTab:Toggle({
     Title = "Auto Farm MOBs",
-    Desc = "Targets Nearest MOB",
+    Desc = "Targets Selected MOBs",
     Value = false,
     Callback = function(state)
         _G.AutoFarm = state
+        SetCameraNoclip(state)
         
         if not state then
             SetNoclip(false)
@@ -172,24 +243,26 @@ FarmTab:Toggle({
 
         task.spawn(function()
             while _G.AutoFarm do
+                if not IsAlive() then
+                    repeat task.wait(0.5) until IsAlive()
+                    task.wait(1)
+                end
+
                 if #_G.SelectedNPCs == 0 then
                     ToggleFloat(false)
                     task.wait(1)
                     continue
                 end
                 
-                -- FIND NEAREST NPC LOGIC
-                local target = nil
-                local shortestDist = math.huge
-                local myPos = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") and lp.Character.HumanoidRootPart.Position
+                local validTargets = {}
+                local myPos = lp.Character.HumanoidRootPart.Position
 
-                if myPos and workspace:FindFirstChild("Living") then
+                if workspace:FindFirstChild("Living") then
                     for _, v in pairs(workspace.Living:GetChildren()) do
                         if v:GetAttribute("IsNpc") == true and v:FindFirstChild("Humanoid") and v:FindFirstChild("HumanoidRootPart") then
                             local h = v.Humanoid
                             if h.Health > 0 then
                                 local baseName = GetBaseName(h.DisplayName)
-                                -- Check validity against selection
                                 local match = false
                                 for _, s in ipairs(_G.SelectedNPCs) do
                                     if s == baseName then match = true break end
@@ -197,43 +270,47 @@ FarmTab:Toggle({
                                 
                                 if match then
                                     local dist = (myPos - v.HumanoidRootPart.Position).Magnitude
-                                    if dist < shortestDist then
-                                        shortestDist = dist
-                                        target = v
-                                    end
+                                    table.insert(validTargets, {
+                                        obj = v,
+                                        dist = dist,
+                                        maxHp = h.MaxHealth or 100
+                                    })
                                 end
                             end
                         end
                     end
                 end
 
-                -- ATTACK LOGIC
+                local target = SelectFromList(validTargets, _G.MobPriority)
+
                 if target then
                     local tRoot = target.HumanoidRootPart
                     local attackCFrame = tRoot.CFrame * CFrame.new(0, -7, 0) 
                     attackCFrame = CFrame.lookAt(attackCFrame.Position, tRoot.Position)
 
                     TweenTo(attackCFrame)
+                    
+                    if not IsAlive() then continue end
+
                     ToggleFloat(true) 
                     SetNoclip(true)
 
                     while _G.AutoFarm and target and target.Parent and target.Humanoid.Health > 0 do
-                        if not lp.Character then break end
+                        if not IsAlive() then break end
                         
-                        -- Keep position relative to enemy
-                        local tPos = tRoot.Position
-                        local goalPos = tRoot.CFrame * CFrame.new(0, -7, 0)
-                        lp.Character.HumanoidRootPart.CFrame = CFrame.lookAt(goalPos.Position, tPos)
-                        lp.Character.HumanoidRootPart.Velocity = Vector3.zero
-
-                        -- Equip
-                        local char = lp.Character
-                        if not char:FindFirstChildWhichIsA("Tool") then
-                            local tool = lp.Backpack:FindFirstChild("Weapon") or lp.Backpack:FindFirstChildWhichIsA("Tool")
-                            if tool then char.Humanoid:EquipTool(tool) end
+                        if lp.Character:FindFirstChild("HumanoidRootPart") and target:FindFirstChild("HumanoidRootPart") then
+                            local tPos = target.HumanoidRootPart.Position
+                            local goalPos = target.HumanoidRootPart.CFrame * CFrame.new(0, -7, 0)
+                            lp.Character.HumanoidRootPart.CFrame = CFrame.lookAt(goalPos.Position, tPos)
+                            lp.Character.HumanoidRootPart.Velocity = Vector3.zero
                         end
 
-                        -- Swing
+                        local myChar = lp.Character
+                        if myChar and not myChar:FindFirstChildWhichIsA("Tool") then
+                            local tool = lp.Backpack:FindFirstChild("Weapon") or lp.Backpack:FindFirstChildWhichIsA("Tool")
+                            if tool and myChar:FindFirstChild("Humanoid") then myChar.Humanoid:EquipTool(tool) end
+                        end
+
                         pcall(function()
                             game:GetService("ReplicatedStorage").Shared.Packages.Knit.Services.ToolService.RF.ToolActivated:InvokeServer("Weapon")
                         end)
@@ -247,18 +324,18 @@ FarmTab:Toggle({
             end
             ToggleFloat(false)
             SetNoclip(false)
+            SetCameraNoclip(false)
         end)
     end
 })
 
 --------------------------------------------------------------------------------
--- ORE / CAVE FARMING (ANCHORED & NEAREST)
+-- ORE / CAVE FARMING
 --------------------------------------------------------------------------------
 
 local Section = FarmTab:Section({ Title = "Farm Caves" })
 local ToolService = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Knit"):WaitForChild("Services"):WaitForChild("ToolService"):WaitForChild("RF"):WaitForChild("ToolActivated")
 
--- CAVE DATA
 local caves = {
     ["Start Cave"] = { folders = {"Island2CaveStart"}, ores = {"Basalt Rock"} },
     ["Middle Cave"] = { folders = {"Island2CaveMid"}, ores = {"Basalt Rock"} },
@@ -270,11 +347,11 @@ local caves = {
 
 local allOres = {"Basalt Rock", "Basalt Core", "Basalt Vein", "Volcanic Rock", "Earth Crystal", "Crimson Crystal", "Cyan Crystal", "Light Crystal"}
 
--- HELPER: Validate Rock
-local function isRockValid(model, oreList)
-    if not model or not model.Parent then return false end
+-- UPDATED isRockValid
+local function isRockValid(model, oreList, checkFullHealth)
+    if not model or not model.Parent then return false, 0 end
     
-    -- Name Check
+    -- 1. Name Match
     local nameMatch = false
     if oreList then
         for _, name in ipairs(oreList) do
@@ -283,9 +360,9 @@ local function isRockValid(model, oreList)
     else
         nameMatch = true
     end
-    if not nameMatch then return false end
+    if not nameMatch then return false, 0 end
 
-    -- Health Check
+    -- 2. Health Attribute Check
     local hPart = nil
     for _, c in ipairs(model:GetChildren()) do
         if c:GetAttribute("Health") then hPart = c break end
@@ -293,35 +370,43 @@ local function isRockValid(model, oreList)
     
     if hPart then
         local hp = hPart:GetAttribute("Health")
-        return hp and hp > 0
+        local maxHp = hPart:GetAttribute("MaxHealth") or 100
+        
+        if not hp or hp <= 0 then return false, 0 end
+
+        if checkFullHealth then
+            if hp < maxHp then return false, 0 end
+        end
+
+        return true, maxHp
     end
-    return false
+    return false, 0
 end
 
--- HELPER: Find Nearest Rock (Scans folders)
-local function FindNearestOre(mode)
+-- UPDATED FindBestOre (Replaces FindNearestOre)
+local function FindBestOre(mode, priority)
+    if not IsAlive() then return nil end
     local rFolder = workspace:FindFirstChild("Rocks")
     if not rFolder then return nil end
-    if not lp.Character or not lp.Character:FindFirstChild("HumanoidRootPart") then return nil end
 
     local myPos = lp.Character.HumanoidRootPart.Position
-    local bestRock = nil
-    local closestDist = math.huge
+    local candidates = {}
 
+    -- Collect Logic
     if mode == "Cave" then
         local data = caves[_G.SelectedCave or "Start Cave"]
         if data and data.folders then
-            -- Scan ALL folders belonging to this cave definition
             for _, folderName in ipairs(data.folders) do
                 local f = rFolder:FindFirstChild(folderName)
                 if f then
                     for _, v in ipairs(f:GetChildren()) do
-                        if isRockValid(v, data.ores) then 
-                            local dist = (v:GetPivot().Position - myPos).Magnitude
-                            if dist < closestDist then
-                                closestDist = dist
-                                bestRock = v
-                            end
+                        local valid, maxHp = isRockValid(v, data.ores, true)
+                        if valid then 
+                            table.insert(candidates, {
+                                obj = v,
+                                dist = (v:GetPivot().Position - myPos).Magnitude,
+                                maxHp = maxHp
+                            })
                         end
                     end
                 end
@@ -330,47 +415,57 @@ local function FindNearestOre(mode)
     elseif mode == "Global" then
         local targetOres = _G.SelectedGlobalOres
         if not targetOres or #targetOres == 0 then targetOres = {"Basalt Rock"} end
-        
-        -- Scan entire Rocks folder
         for _, folder in ipairs(rFolder:GetChildren()) do
             for _, v in ipairs(folder:GetChildren()) do
-                if isRockValid(v, targetOres) then 
-                     local dist = (v:GetPivot().Position - myPos).Magnitude
-                     if dist < closestDist then
-                         closestDist = dist
-                         bestRock = v
-                     end
+                local valid, maxHp = isRockValid(v, targetOres, true)
+                if valid then 
+                    table.insert(candidates, {
+                        obj = v,
+                        dist = (v:GetPivot().Position - myPos).Magnitude,
+                        maxHp = maxHp
+                    })
                 end
             end
         end
     end
-    return bestRock
+
+    return SelectFromList(candidates, priority)
 end
 
--- MINING LOOP (Uses Anchor for Anti-Jitter)
-local function MineLoop(flag, mode)
+local function MineLoop(flag, mode, priorityVarName)
     while _G[flag] do
-        local rock = FindNearestOre(mode)
+        if not IsAlive() then
+            repeat task.wait(0.5) until IsAlive()
+            task.wait(1) 
+        end
+
+        -- Get priority from the variable name passed
+        local currentPriority = _G[priorityVarName] or "Nearest"
+        local rock = FindBestOre(mode, currentPriority)
+
         if rock then
             local rockPivot = rock:GetPivot()
-            -- Position: Under rock, looking up
             local minePos = rockPivot * CFrame.new(0, -6, 0)
             minePos = CFrame.lookAt(minePos.Position, rockPivot.Position)
 
             TweenTo(minePos)
+
+            if not IsAlive() then continue end
             
-            -- SWITCH TO ANCHOR MODE
             ToggleFloat(false)
             SetNoclip(true)
             
-            if lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") then
+            if IsAlive() then
                 lp.Character.HumanoidRootPart.CFrame = minePos
                 lp.Character.HumanoidRootPart.Anchored = true
             end
 
-            -- MINE UNTIL DEAD
-            while _G[flag] and rock and rock.Parent and isRockValid(rock) do
-                if not lp.Character then break end
+            -- MINING LOOP
+            while _G[flag] and rock and rock.Parent do
+                local valid, _ = isRockValid(rock)
+                if not valid then break end
+
+                if not IsAlive() then break end
                 
                 local char = lp.Character
                 if not char:FindFirstChild("Pickaxe") then
@@ -382,26 +477,25 @@ local function MineLoop(flag, mode)
                 task.wait(0.1)
             end
             
-            -- UNANCHOR
-            if lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") then
+            if IsAlive() then
                 lp.Character.HumanoidRootPart.Anchored = false
             end
         else
-            -- No rock found
-            if lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") then
+            if IsAlive() then
                 lp.Character.HumanoidRootPart.Anchored = false
             end
             task.wait(1)
         end
         task.wait()
     end
-    -- CLEANUP
-    if lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") then
+    
+    if IsAlive() then
         lp.Character.HumanoidRootPart.Anchored = false
     end
     SetNoclip(false)
 end
 
+_G.CavePriority = "Nearest"
 FarmTab:Dropdown({
     Title = "Select Cave",
     Values = { "Start Cave", "Middle Cave", "Danger Cave","Deep Cave", "Goblin Cave", "Volcanic Depths" },
@@ -409,22 +503,32 @@ FarmTab:Dropdown({
     Callback = function(v) _G.SelectedCave = v end
 })
 
+FarmTab:Dropdown({
+    Title = "Cave Target Priority",
+    Values = { "Nearest", "Random", "Prioritize Highest MaxHealth", "Prioritize Lowest MaxHealth" },
+    Value = "Nearest",
+    Callback = function(v) _G.CavePriority = v end
+})
+
 FarmTab:Toggle({
     Title = "Auto Mine Cave",
-    Desc = "Targets Nearest Rocks in Cave",
+    Desc = "Targets Rocks in Cave",
     Callback = function(state)
         _G.AutoCaveEnabled = state
         _G.AutoOreEnabled = false
-        if not state and lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") then
+        SetCameraNoclip(state)
+        
+        if not state and IsAlive() then
              lp.Character.HumanoidRootPart.Anchored = false
+             SetCameraNoclip(false)
         end
-        if state then task.spawn(function() MineLoop("AutoCaveEnabled", "Cave") end) end
+        if state then task.spawn(function() MineLoop("AutoCaveEnabled", "Cave", "CavePriority") end) end
     end
 })
 
--- GLOBAL ORES
 local Section = FarmTab:Section({ Title = "Farm Rocks" })
 
+_G.OrePriority = "Nearest"
 FarmTab:Dropdown({
     Title = "Select Rock Types",
     Values = allOres,
@@ -434,43 +538,47 @@ FarmTab:Dropdown({
     Callback = function(v) _G.SelectedGlobalOres = v end
 })
 
+FarmTab:Dropdown({
+    Title = "Ore Target Priority",
+    Values = { "Nearest", "Random", "Prioritize Highest MaxHealth", "Prioritize Lowest MaxHealth" },
+    Value = "Nearest",
+    Callback = function(v) _G.OrePriority = v end
+})
+
 FarmTab:Toggle({
     Title = "Auto Mine Ore",
-    Desc = "Targets Nearest Rocks",
+    Desc = "Targets Rocks Anywhere",
     Callback = function(state)
         _G.AutoOreEnabled = state
         _G.AutoCaveEnabled = false
-        if not state and lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") then
+        SetCameraNoclip(state)
+        
+        if not state and IsAlive() then
              lp.Character.HumanoidRootPart.Anchored = false
+             SetCameraNoclip(false)
         end
-        if state then task.spawn(function() MineLoop("AutoOreEnabled", "Global") end) end
+        if state then task.spawn(function() MineLoop("AutoOreEnabled", "Global", "OrePriority") end) end
     end
 })
 
 --------------------------------------------------------------------------------
--- FORGE TAB (NEW)
+-- FORGE, SELL, ETC
 --------------------------------------------------------------------------------
-local ForgeTab = Window:Tab({Title = "Forge"})
 
--- Forge Variables
+local ForgeTab = Window:Tab({Title = "Forge"})
 local AutoForgeEnabled = false
 local ForgeConnections = {}
 
--- FORGE HELPER FUNCTIONS --
-
--- Cleanup
 local function cleanupMouse()
     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0) 
     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
 end
 
--- 1. Hammer
 local function clickHammerButton(button)
     local absPos = button.AbsolutePosition
     local absSize = button.AbsoluteSize
     local centerX = absPos.X + (absSize.X / 2)
     local centerY = absPos.Y + (absSize.Y / 2) + GuiService:GetGuiInset().Y
-    
     VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
     task.wait(0.01)
     VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
@@ -501,71 +609,57 @@ local function handleHammerNote(noteObject)
     end)
 end
 
--- 2. Melt (Fast)
 local isMelting = false
 local function runMeltLoop()
     if isMelting then return end
     isMelting = true
-    
     if not ForgeUI then ForgeUI = lp.PlayerGui:FindFirstChild("Forge") end
     if not ForgeUI or not ForgeUI:FindFirstChild("MeltMinigame") then 
         isMelting = false
         return 
     end
-
     local MeltMinigame = ForgeUI.MeltMinigame
     local Heater = MeltMinigame:WaitForChild("Heater")
     local Handle = Heater:WaitForChild("Top")
     local ProgressBar = MeltMinigame:WaitForChild("Bar")
-    
     task.wait(0.3)
-
     while AutoForgeEnabled and MeltMinigame.Visible and ProgressBar.Area.AbsoluteSize.Y < (ProgressBar.Frame.AbsoluteSize.Y * 0.99) do
         local handlePos = Handle.AbsolutePosition
         local handleSize = Handle.AbsoluteSize
         local heaterSize = Heater.AbsoluteSize
         local insetY = GuiService:GetGuiInset().Y
-
         local startX = handlePos.X + (handleSize.X / 2)
         local startY = handlePos.Y + (handleSize.Y / 2) + insetY
         local endY = startY + (heaterSize.Y * 0.7) 
-
         VirtualInputManager:SendMouseMoveEvent(startX, startY, game)
         VirtualInputManager:SendMouseButtonEvent(startX, startY, 0, true, game, 1)
-        
         local steps = 2 
         for i = 1, steps do
             local lerpY = startY + ((endY - startY) * (i / steps))
             VirtualInputManager:SendMouseMoveEvent(startX, lerpY, game)
             RunService.RenderStepped:Wait()
         end
-
         VirtualInputManager:SendMouseButtonEvent(startX, endY, 0, false, game, 1)
         RunService.RenderStepped:Wait()
     end
     isMelting = false
 end
 
--- 3. Pour
 local isPouring = false
 local function runPourLoop()
     if isPouring then return end
     isPouring = true
-
     if not ForgeUI then ForgeUI = lp.PlayerGui:FindFirstChild("Forge") end
     if not ForgeUI or not ForgeUI:FindFirstChild("PourMinigame") then 
         isPouring = false
         return 
     end
-
     local PourMinigame = ForgeUI.PourMinigame
     local PourArea = PourMinigame.Frame.Area
     local PourLine = PourMinigame.Frame.Line
-
     while AutoForgeEnabled and isPouring and PourMinigame.Visible do
         local areaCenterY = PourArea.AbsolutePosition.Y + (PourArea.AbsoluteSize.Y / 2)
         local lineCenterY = PourLine.AbsolutePosition.Y + (PourLine.AbsoluteSize.Y / 2)
-        
         if lineCenterY > areaCenterY then
             VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
         else
@@ -577,14 +671,12 @@ local function runPourLoop()
     isPouring = false
 end
 
--- 4. Mold
 local function clickMoldUntilGone(moldModel)
     task.wait(0.2)
     while AutoForgeEnabled and moldModel and moldModel.Parent do
         local pivotCFrame = moldModel:GetPivot()
         local targetPosition = pivotCFrame.Position
         local vectorPos, onScreen = Camera:WorldToViewportPoint(targetPosition)
-        
         if onScreen then
             VirtualInputManager:SendMouseButtonEvent(vectorPos.X, vectorPos.Y, 0, true, game, 1)
             task.wait(0.05)
@@ -595,35 +687,26 @@ local function clickMoldUntilGone(moldModel)
 end
 
 ForgeTab:Section({ Title = "Auto Forge" })
-
 ForgeTab:Toggle({
     Title = "Auto Forge Master",
     Desc = "Auto Hammer, Melt, Pour & Mold",
     Value = false,
     Callback = function(state) 
         AutoForgeEnabled = state
-        
-        -- Try to refresh reference just in case
         if not ForgeUI then ForgeUI = lp.PlayerGui:FindFirstChild("Forge") end
-
         if state and ForgeUI then
-            -- 1. Hammer Listener
             if ForgeUI:FindFirstChild("HammerMinigame") then
                 local hammerC = ForgeUI.HammerMinigame.ChildAdded:Connect(function(child)
                     if child.Name == "Frame" then handleHammerNote(child) end
                 end)
                 table.insert(ForgeConnections, hammerC)
             end
-            
-            -- 2. Melt Listener
             if ForgeUI:FindFirstChild("MeltMinigame") then
                 local meltC = ForgeUI.MeltMinigame:GetPropertyChangedSignal("Visible"):Connect(function()
                     if ForgeUI.MeltMinigame.Visible then task.spawn(runMeltLoop) end
                 end)
                 table.insert(ForgeConnections, meltC)
             end
-
-            -- 3. Pour Listener
             if ForgeUI:FindFirstChild("PourMinigame") then
                 local pourC = ForgeUI.PourMinigame:GetPropertyChangedSignal("Visible"):Connect(function()
                     if ForgeUI.PourMinigame.Visible then
@@ -637,14 +720,10 @@ ForgeTab:Toggle({
                 end)
                 table.insert(ForgeConnections, pourC)
             end
-            
-            -- 4. Mold Listener
             local moldC = Debris.ChildAdded:Connect(function(child)
                 if child.Name == "Mold" then clickMoldUntilGone(child) end
             end)
             table.insert(ForgeConnections, moldC)
-
-            -- Check Initial State (If enabled while already open)
             if ForgeUI:FindFirstChild("MeltMinigame") and ForgeUI.MeltMinigame.Visible then task.spawn(runMeltLoop) end
             if ForgeUI:FindFirstChild("PourMinigame") and ForgeUI.PourMinigame.Visible then 
                 task.wait(0.5)
@@ -653,15 +732,9 @@ ForgeTab:Toggle({
             if Debris:FindFirstChild("Mold") then
                 task.spawn(function() clickMoldUntilGone(Debris.Mold) end)
             end
-
         else
-            -- Disconnect all events
-            for _, v in pairs(ForgeConnections) do
-                v:Disconnect()
-            end
+            for _, v in pairs(ForgeConnections) do v:Disconnect() end
             ForgeConnections = {}
-            
-            -- Reset Flags
             isMelting = false
             isPouring = false
             cleanupMouse()
@@ -669,22 +742,9 @@ ForgeTab:Toggle({
     end
 })
 
---------------------------------------------------------------------------------
--- SELL TAB (PRESERVED)
---------------------------------------------------------------------------------
 local SellTab = Window:Tab({Title = "Sell Ores"})
-
-local items = {
-    "Iron","Gold","Silver","Cobalt","Titanium","Lapis Lazuli","Platinum","Boneite","Dark Boneite","Volcanic Rock",
-    "Quartz","Amethyst","Topaz","Diamond","Sapphire","Slimite","Curpite","Obsidian",
-    "Emerald","Ruby","Rivalite","Uranium","Mythril","Eye Ore","Fireite",
-    "Magmaite","Lightite","Demonite","Darkryte"
-}
-
-local items1 = {
-    "Magenta Crystal","Crimson Crystal","Greem Crystal","Orange Crystal","Blue Crystal",
-    "Rainbow Crystal","Arcane Crystal"
-}
+local items = {"Iron","Gold","Silver","Cobalt","Titanium","Lapis Lazuli","Platinum","Boneite","Dark Boneite","Volcanic Rock","Quartz","Amethyst","Topaz","Diamond","Sapphire","Slimite","Curpite","Obsidian","Emerald","Ruby","Rivalite","Uranium","Mythril","Eye Ore","Fireite","Magmaite","Lightite","Demonite","Darkryte"}
+local items1 = {"Magenta Crystal","Crimson Crystal","Greem Crystal","Orange Crystal","Blue Crystal","Rainbow Crystal","Arcane Crystal"}
 
 SellTab:Button({
     Title = "Interact with Greedy Cey",
@@ -693,8 +753,6 @@ SellTab:Button({
         game:GetService("ReplicatedStorage").Shared.Packages.Knit.Services.ProximityService.RF.Dialogue:InvokeServer(workspace.Proximity["Greedy Cey"])
     end
 })
-
--- AUTO SELL 1
 local selectedItems = {}
 local sellDelay = 5
 SellTab:Section({ Title = "Auto Sell Island 2" })
@@ -720,7 +778,6 @@ SellTab:Toggle({
     end
 })
 
--- AUTO SELL 2 (Goblin)
 local selectedItems2 = {}
 local sellDelay2 = 5
 SellTab:Section({ Title = "Auto Sell Goblin Cave" })
@@ -746,9 +803,6 @@ SellTab:Toggle({
     end
 })
 
---------------------------------------------------------------------------------
--- POTION TAB
---------------------------------------------------------------------------------
 local PotionTab = Window:Tab({Title = "Potion"})
 local PotionMap = {
     ["Health Potion 2"]   = "HealthPotion2",
@@ -769,7 +823,12 @@ PotionTab:Slider({ Title = "Amount", Value = {Min=1,Max=10,Default=1}, Callback 
 PotionTab:Button({
     Title = "Buy Potion",
     Callback = function()
-        game:GetService("ReplicatedStorage").Shared.Packages.Knit.Services.ProximityService.RF.Purchase:InvokeServer(PotionMap[buyName], buyAmt)
+        local args = {
+            PotionMap[buyName],
+            buyAmt
+        }
+        local remote = game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Knit"):WaitForChild("Services"):WaitForChild("ProximityService"):WaitForChild("RF"):WaitForChild("Purchase")
+        remote:InvokeServer(unpack(args))
     end
 })
 
@@ -783,9 +842,6 @@ PotionTab:Button({
     end
 })
 
---------------------------------------------------------------------------------
--- TELEPORT TAB
---------------------------------------------------------------------------------
 local TeleportTab = Window:Tab({Title = "Teleport"})
 local TeleportLocations = {
     ["Spawn"] = CFrame.new(-211, 21, -47),
@@ -801,7 +857,6 @@ local SelectedLoc = "Spawn"
 
 local function DoTp()
     if TeleportLocations[SelectedLoc] then
-        -- Use our smooth tween for teleports too
         TweenTo(TeleportLocations[SelectedLoc])
         task.wait(0.5)
         ToggleFloat(false)
@@ -831,7 +886,6 @@ TeleportTab:Button({
     end
 })
 
--- Fast Respawn Fix
 if _G.TpConn then _G.TpConn:Disconnect() end
 _G.TpConn = lp.CharacterAdded:Connect(function(c)
     if _G.TeleportToggleActive then
@@ -841,13 +895,9 @@ _G.TpConn = lp.CharacterAdded:Connect(function(c)
     end
 end)
 
---------------------------------------------------------------------------------
--- MSC
---------------------------------------------------------------------------------
 local MSCTab = Window:Tab({Title = "MSC"})
 
 local afkConn = nil
-
 local function setAntiAFK(state)
     if state then
         if afkConn then afkConn:Disconnect() end
@@ -864,7 +914,6 @@ local function setAntiAFK(state)
     end
 end
 
--- Initialize Anti-AFK on script load
 setAntiAFK(true)
 
 MSCTab:Toggle({
