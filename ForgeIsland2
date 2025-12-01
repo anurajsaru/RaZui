@@ -801,7 +801,7 @@ ForgeTab:Toggle({
 })
 
 local SellTab = Window:Tab({Title = "Sell Ores"})
-local items = {"Iron","Gold","Silver","Cobalt","Titanium","Lapis Lazuli","Platinum","Boneite","Dark Boneite","Volcanic Rock","Quartz","Amethyst","Topaz","Diamond","Sapphire","Slimite","Cuprite","Obsidian","Emerald","Ruby","Rivalite","Uranium","Mythril","Eye Ore","Fireite","Magmaite","Lightite","Demonite","Darkryte"}
+local items = {"Iron","Gold","Silver","Cobalt","Titanium","Lapis Lazuli","Platinum","Boneite","Dark Boneite","Volcanic Rock","Quartz","Amethyst","Topaz","Diamond","Sapphire","Slimite","Curpite","Obsidian","Emerald","Ruby","Rivalite","Uranium","Mythril","Eye Ore","Fireite","Magmaite","Lightite","Demonite","Darkryte"}
 local items1 = {"Magenta Crystal","Crimson Crystal","Greem Crystal","Orange Crystal","Blue Crystal","Rainbow Crystal","Arcane Crystal"}
 
 SellTab:Button({
