@@ -143,7 +143,7 @@ local function TweenTo(targetCFrame)
     local conn = tween.Completed:Connect(function() completed = true end)
     
     while not completed do
-        if not _G.AutoFarm and not _G.AutoCaveEnabled and not _G.AutoOreEnabled and not _G.TeleportToggleActive then
+        if not _G.AutoFarm and not _G.AutoCaveEnabled and not _G.AutoOreEnabled and not _G.TeleportToggleActive and not _G.ManualTeleport then
             tween:Cancel()
             ToggleFloat(false)
             break
@@ -239,6 +239,12 @@ FarmTab:Toggle({
         SetCameraNoclip(state)
         
         if not state then
+            -- SAFETY TELEPORT (14 STUDS)
+            if IsAlive() then
+                local hrp = lp.Character.HumanoidRootPart
+                hrp.CFrame = hrp.CFrame + Vector3.new(0, 14, 0)
+                hrp.Velocity = Vector3.zero
+            end
             SetNoclip(false)
             ToggleFloat(false)
             return
@@ -354,8 +360,22 @@ local allOres = {"Basalt Rock", "Basalt Core", "Basalt Vein", "Volcanic Rock", "
 
 local RockBlacklist = {} -- [Instance] = tick()
 
--- UPDATED isRockValid
-local function isRockValid(model, oreList, checkFullHealth)
+-- NEW FUNCTION: Check if other players are near the rock
+local function IsRockOccupied(rock)
+    local rockPos = rock:GetPivot().Position
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= lp and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            local dist = (p.Character.HumanoidRootPart.Position - rockPos).Magnitude
+            if dist < 18 then -- If player is within 18 studs, assume it's taken
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- UPDATED isRockValid (Includes Occupied Check with Bypass)
+local function isRockValid(model, oreList, checkFullHealth, ignoreOccupied)
     if not model or not model.Parent then return false, 0 end
     
     -- BLACKLIST CHECK
@@ -365,6 +385,11 @@ local function isRockValid(model, oreList, checkFullHealth)
         else
             RockBlacklist[model] = nil 
         end
+    end
+    
+    -- CHECK OCCUPIED (Unless ignoreOccupied is true)
+    if not ignoreOccupied and IsRockOccupied(model) then
+        return false, 0
     end
     
     local nameMatch = false
@@ -413,7 +438,8 @@ local function FindBestOre(mode, priority)
                 local f = rFolder:FindFirstChild(folderName)
                 if f then
                     for _, v in ipairs(f:GetChildren()) do
-                        local valid, maxHp = isRockValid(v, data.ores, true)
+                        -- PASS FALSE to check occupied status during SEARCH
+                        local valid, maxHp = isRockValid(v, data.ores, true, false)
                         if valid then 
                             table.insert(candidates, {
                                 obj = v,
@@ -430,7 +456,8 @@ local function FindBestOre(mode, priority)
         if not targetOres or #targetOres == 0 then targetOres = {"Basalt Rock"} end
         for _, folder in ipairs(rFolder:GetChildren()) do
             for _, v in ipairs(folder:GetChildren()) do
-                local valid, maxHp = isRockValid(v, targetOres, true)
+                -- PASS FALSE to check occupied status during SEARCH
+                local valid, maxHp = isRockValid(v, targetOres, true, false)
                 if valid then 
                     table.insert(candidates, {
                         obj = v,
@@ -485,8 +512,13 @@ local function MineLoop(flag, mode, priorityVarName)
 
             -- MINING LOOP
             while _G[flag] and rock and rock.Parent do
-                local valid, _ = isRockValid(rock)
+                -- PASS TRUE to IGNORE occupied status while MINING
+                -- This ensures we finish the rock even if someone walks up to us
+                local valid, _ = isRockValid(rock, nil, nil, true)
                 if not valid then break end
+                
+                -- REMOVED THE EXTRA ISROCKOCCUPIED CHECK HERE
+                -- We want to persist if we are already mining.
 
                 -- BREAK IF DEAD
                 if not IsAlive() then break end
@@ -560,8 +592,14 @@ FarmTab:Toggle({
         SetCameraNoclip(state)
         
         if not state and IsAlive() then
-             lp.Character.HumanoidRootPart.Anchored = false
+             -- SAFETY TELEPORT (14 STUDS)
+             local hrp = lp.Character.HumanoidRootPart
+             hrp.CFrame = hrp.CFrame + Vector3.new(0, 14, 0)
+             hrp.Velocity = Vector3.zero
+             hrp.Anchored = false
              SetCameraNoclip(false)
+             SetNoclip(false)
+             ToggleFloat(false)
         end
         if state then task.spawn(function() MineLoop("AutoCaveEnabled", "Cave", "CavePriority") end) end
     end
@@ -595,10 +633,35 @@ FarmTab:Toggle({
         SetCameraNoclip(state)
         
         if not state and IsAlive() then
-             lp.Character.HumanoidRootPart.Anchored = false
+             -- SAFETY TELEPORT (14 STUDS)
+             local hrp = lp.Character.HumanoidRootPart
+             hrp.CFrame = hrp.CFrame + Vector3.new(0, 14, 0)
+             hrp.Velocity = Vector3.zero
+             hrp.Anchored = false
              SetCameraNoclip(false)
+             SetNoclip(false)
+             ToggleFloat(false)
         end
         if state then task.spawn(function() MineLoop("AutoOreEnabled", "Global", "OrePriority") end) end
+    end
+})
+
+FarmTab:Toggle({
+    Title = "Attack while farming rocks",
+    Desc = "Constantly fires weapon remote",
+    Callback = function(state)
+        _G.AttackWhileMining = state
+        if state then
+            task.spawn(function()
+                while _G.AttackWhileMining do
+                    pcall(function()
+                        local args = { "Weapon" }
+                        game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Knit"):WaitForChild("Services"):WaitForChild("ToolService"):WaitForChild("RF"):WaitForChild("ToolActivated"):InvokeServer(unpack(args))
+                    end)
+                    task.wait()
+                end
+            end)
+        end
     end
 })
 
@@ -804,13 +867,41 @@ local SellTab = Window:Tab({Title = "Sell Ores"})
 local items = {"Iron","Gold","Silver","Cobalt","Titanium","Lapis Lazuli","Platinum","Boneite","Dark Boneite","Volcanic Rock","Quartz","Amethyst","Topaz","Diamond","Sapphire","Slimite","Curpite","Obsidian","Emerald","Ruby","Rivalite","Uranium","Mythril","Eye Ore","Fireite","Magmaite","Lightite","Demonite","Darkryte"}
 local items1 = {"Magenta Crystal","Crimson Crystal","Greem Crystal","Orange Crystal","Blue Crystal","Rainbow Crystal","Arcane Crystal"}
 
+-- MODIFIED BUTTON: Teleport and interact (Fixed Tween Logic)
 SellTab:Button({
-    Title = "Interact with Greedy Cey",
-    Desc = "Press this to sell ores from anywhere. If the selected ores arenot selling press this again.",
+    Title = "Teleport to Greedy Cey",
+    Desc = "Teleports to Cey and interacts (Press E)",
     Callback = function()
-        game:GetService("ReplicatedStorage").Shared.Packages.Knit.Services.ProximityService.RF.Dialogue:InvokeServer(workspace.Proximity["Greedy Cey"])
+        _G.ManualTeleport = true -- ALLOW TWEEN TO RUN
+        local targetCFrame = CFrame.new(-144.024, 20.855, -27.657, -0.93, 0, -0.805, 0, 1, 0, 0.825, 0, -0.593)
+        
+        TweenTo(targetCFrame)
+        
+        _G.ManualTeleport = false -- RESET
+        
+        if lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") then
+            lp.Character.HumanoidRootPart.Velocity = Vector3.zero
+        end
+        ToggleFloat(false)
+        SetNoclip(false)
+        
+        task.wait(0.5)
+        local promptPart = workspace.Proximity:FindFirstChild("Greedy Cey")
+        if promptPart then
+            local prompt = promptPart:FindFirstChildWhichIsA("ProximityPrompt")
+            if prompt then
+                if fireproximityprompt then
+                    fireproximityprompt(prompt)
+                else
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                    task.wait(0.1)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                end
+            end
+        end
     end
 })
+
 local selectedItems = {}
 local sellDelay = 5
 SellTab:Section({ Title = "Auto Sell Island 2" })
