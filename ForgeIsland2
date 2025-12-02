@@ -648,7 +648,6 @@ FarmTab:Toggle({
 
 FarmTab:Toggle({
     Title = "Attack while farming rocks",
-    Desc = "Constantly fires weapon remote",
     Callback = function(state)
         _G.AttackWhileMining = state
         if state then
