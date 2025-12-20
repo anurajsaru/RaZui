@@ -12,10 +12,10 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local Remote = ReplicatedStorage:WaitForChild("BridgeNet2"):WaitForChild("dataRemoteEvent")
 
--- // UI CREATION (Moved to top so it always loads)
+-- // UI CREATION
 local Window = WindUI:CreateWindow({
     Title = "RaZui Hub",
-    Folder = "MySuperHub",
+    Folder = "MySuperHub", -- WindUI saves to: workspace/MySuperHub/RaZui Hub/
     Size = UDim2.fromOffset(580, 460),
     Transparent = true,
     Theme = "Dark",
@@ -62,8 +62,13 @@ local DodgeAnimations = {
     ["rbxassetid://121232175709935"] = false
 }
 
--- 4. BOSS CONFIG
-local BossAnimationID = "rbxassetid://108305757420473"
+-- 4. BOSS CONFIG (Vulnerability Animations)
+-- If ANY of these play, the boss becomes targetable
+local BossVulnerabilityAnimations = {
+    ["rbxassetid://108305757420473"] = true, -- Original
+    ["rbxassetid://131695229178697"] = true, -- New
+    ["rbxassetid://71279288117265"] = true   -- New
+}
 
 -- 5. MAP SAFE SPOTS
 local MapConfigs = {
@@ -100,6 +105,7 @@ end
 
 -- // State Variables
 local IsFarming = false
+local IsAutoReplay = false
 local IsDodging = false
 local IsAwakening = false 
 local BossIsVulnerable = false
@@ -108,11 +114,10 @@ local DodgeAddedConnection = nil
 local MonitoredNPCs = {}
 
 -- // Helper Functions
-
 local function GetPriority(mobName, isBoss)
     if isBoss then return 5 end
     if PriorityList[mobName] then return PriorityList[mobName] end
-    return 4 -- Remaining NPCs
+    return 4
 end
 
 local function FindSkillFrameByKey(keyNumberString)
@@ -120,13 +125,10 @@ local function FindSkillFrameByKey(keyNumberString)
     if not screenGui then return nil end
     local skillBar = screenGui:WaitForChild("UltFrame"):FindFirstChild("SkillBar")
     if not skillBar then return nil end
-
     for _, child in pairs(skillBar:GetChildren()) do
         if child:IsA("Frame") or child:IsA("ImageLabel") then
             local numberLabel = child:FindFirstChild("Number")
-            if numberLabel and numberLabel.Text == keyNumberString then
-                return child 
-            end
+            if numberLabel and numberLabel.Text == keyNumberString then return child end
         end
     end
     return nil
@@ -136,13 +138,10 @@ local function FindGearFrame()
     local screenGui = PlayerGui:FindFirstChild("ScreenGuiIngame")
     if not screenGui then return nil end
     local ultFrame = screenGui:WaitForChild("UltFrame")
-    
     for _, child in pairs(ultFrame:GetChildren()) do
         if child:IsA("Frame") or child:IsA("ImageLabel") then
             local textLabel = child:FindFirstChild("UltimateText")
-            if textLabel and textLabel.Text == "F" then
-                return child
-            end
+            if textLabel and textLabel.Text == "F" then return child end
         end
     end
     return nil
@@ -161,13 +160,9 @@ end
 
 local function GetBestTarget()
     if IsAwakening then return nil end
-
     local potentialTargets = {}
-    
-    -- Safety check for NPCs folder
     local NPCsFolder = Workspace:FindFirstChild("NPCs")
     if NPCsFolder then
-        -- 1. Gather Standard NPCs
         for _, npc in pairs(NPCsFolder:GetChildren()) do
             local humanoid = npc:FindFirstChild("Humanoid")
             local rootPart = npc:FindFirstChild("HumanoidRootPart")
@@ -181,8 +176,6 @@ local function GetBestTarget()
             end
         end
     end
-
-    -- 2. Gather Boss (Only if Vulnerable)
     local BossFolder = Workspace:FindFirstChild("Boss")
     if BossFolder then
         local boss = BossFolder:FindFirstChild("Boss")
@@ -190,7 +183,7 @@ local function GetBestTarget()
             local humanoid = boss:FindFirstChild("Humanoid")
             local rootPart = boss:FindFirstChild("HumanoidRootPart")
             if humanoid and rootPart and humanoid.Health > 0 then
-                local priority = GetPriority(boss.Name, true) -- This returns 5
+                local priority = GetPriority(boss.Name, true)
                 local dist = 999999
                 if LocalPlayer.Character and LocalPlayer.Character.PrimaryPart then
                     dist = (LocalPlayer.Character.PrimaryPart.Position - rootPart.Position).Magnitude
@@ -199,16 +192,9 @@ local function GetBestTarget()
             end
         end
     end
-    
-    -- Sort: Priority (1 first, 5 last), then Distance
     table.sort(potentialTargets, function(a, b)
-        if a.Priority == b.Priority then 
-            return a.Distance < b.Distance 
-        else 
-            return a.Priority < b.Priority 
-        end
+        if a.Priority == b.Priority then return a.Distance < b.Distance else return a.Priority < b.Priority end
     end)
-    
     if #potentialTargets > 0 then return potentialTargets[1].Model end
     return nil
 end
@@ -219,47 +205,40 @@ local function AttemptSkill(key, code)
 end
 
 -- ==========================================
--- BOSS MONITORING
+-- BOSS MONITORING (UPDATED)
 -- ==========================================
 local function MonitorBoss()
     local BossFolder = Workspace:FindFirstChild("Boss")
     if not BossFolder then return end
-    
     local boss = BossFolder:WaitForChild("Boss", 5)
     if not boss then return end
-    
     local humanoid = boss:WaitForChild("Humanoid", 10)
     if not humanoid then return end
     local animator = humanoid:WaitForChild("Animator", 10)
     if not animator then return end
-
+    
     BossIsVulnerable = false
-
+    
     local conn = animator.AnimationPlayed:Connect(function(track)
-        if track.Animation.AnimationId == BossAnimationID then
-            BossIsVulnerable = true
+        -- Check against table of 3 animations
+        if BossVulnerabilityAnimations[track.Animation.AnimationId] then 
+            BossIsVulnerable = true 
+            print("Boss Vulnerable (Animation Triggered)")
         end
-    end)
-
-    humanoid.Died:Connect(function()
-        BossIsVulnerable = false
     end)
     
+    humanoid.Died:Connect(function() BossIsVulnerable = false end)
     boss.AncestryChanged:Connect(function()
-        if not boss:IsDescendantOf(Workspace) then
-            BossIsVulnerable = false
-        end
+        if not boss:IsDescendantOf(Workspace) then BossIsVulnerable = false end
     end)
 end
 
 -- ==========================================
 -- MAP BASED DODGE LOGIC
 -- ==========================================
-
 local function GetBestDodgeSpot()
     local spawn = Workspace:FindFirstChild("SpawnLocation")
     if not spawn then return nil end
-
     local currentMap = nil
     for _, mapData in ipairs(MapConfigs) do
         if (spawn.Position - mapData.SpawnCFrame.Position).Magnitude < 10 then 
@@ -268,15 +247,12 @@ local function GetBestDodgeSpot()
         end
     end
     if not currentMap then return nil end
-
     local myPos = LocalPlayer.Character and LocalPlayer.Character.PrimaryPart and LocalPlayer.Character.PrimaryPart.Position
     if not myPos then return nil end
-
     local spot1 = currentMap.SafeSpots[1]
     local spot2 = currentMap.SafeSpots[2]
     local dist1 = (myPos - spot1.Position).Magnitude
     local dist2 = (myPos - spot2.Position).Magnitude
-
     if dist1 > dist2 then return spot1 else return spot2 end
 end
 
@@ -284,7 +260,6 @@ local function PerformDodge()
     if IsDodging then return end 
     local safeSpot = GetBestDodgeSpot()
     if not safeSpot then return end 
-
     IsDodging = true
     task.spawn(function()
         local char = LocalPlayer.Character
@@ -301,19 +276,14 @@ end
 local function MonitorNPC(npc)
     if MonitoredNPCs[npc] then return end 
     MonitoredNPCs[npc] = true
-
     local humanoid = npc:WaitForChild("Humanoid", 10)
     if not humanoid then return end
     local animator = humanoid:WaitForChild("Animator", 10)
     if not animator then return end
-
     local conn = animator.AnimationPlayed:Connect(function(track)
-        if DodgeAnimations[track.Animation.AnimationId] == true then
-            PerformDodge()
-        end
+        if DodgeAnimations[track.Animation.AnimationId] == true then PerformDodge() end
     end)
     table.insert(DodgeConnections, conn)
-    
     npc.AncestryChanged:Connect(function()
         if not npc:IsDescendantOf(game) then MonitoredNPCs[npc] = nil end
     end)
@@ -324,8 +294,6 @@ local function SetupGlobalDodge()
     DodgeConnections = {}
     MonitoredNPCs = {}
     if DodgeAddedConnection then DodgeAddedConnection:Disconnect() end
-
-    -- Monitor NPCs safely
     local NPCsFolder = Workspace:FindFirstChild("NPCs")
     if NPCsFolder then
         for _, npc in pairs(NPCsFolder:GetChildren()) do
@@ -335,8 +303,6 @@ local function SetupGlobalDodge()
             task.spawn(function() MonitorNPC(npc) end)
         end)
     end
-
-    -- Monitor Boss safely
     local BossFolder = Workspace:FindFirstChild("Boss")
     if BossFolder then
         task.spawn(function()
@@ -345,10 +311,7 @@ local function SetupGlobalDodge()
         end)
         BossFolder.ChildAdded:Connect(function(child)
             if child.Name == "Boss" then
-                task.spawn(function() 
-                    MonitorNPC(child) 
-                    MonitorBoss() 
-                end)
+                task.spawn(function() MonitorNPC(child) MonitorBoss() end)
             end
         end)
         task.spawn(MonitorBoss)
@@ -362,18 +325,21 @@ local function CleanupGlobalDodge()
     if DodgeAddedConnection then DodgeAddedConnection:Disconnect() end
 end
 
+-- ==========================================
+-- UI TABS AND TOGGLES
+-- ==========================================
+
 local Tab = Window:Tab({ Title = "Auto Farm" })
 Tab:Select()
 
-local Toggle = Tab:Toggle({
+local FarmToggle = Tab:Toggle({
     Title = "Auto Farm",
     Desc = "Priorities: List(1-3) > Remaining(4) > Boss(5)",
+    Flag = "AutoFarmToggle", 
     Callback = function(state) 
         IsFarming = state
-        
         if state then
             SetupGlobalDodge()
-
             local NoclipLoop = RunService.Stepped:Connect(function()
                 if not IsFarming then return end
                 if LocalPlayer.Character then
@@ -382,19 +348,14 @@ local Toggle = Tab:Toggle({
                     end
                 end
             end)
-
             task.spawn(function()
                 local CurrentTarget = nil
-                
                 while IsFarming do
                     RunService.Heartbeat:Wait()
                     local UltFrame = GetUltFrame()
                     if not UltFrame then continue end
-
-                    -- 1. AWAKENING CHECK
                     local Bar = UltFrame:FindFirstChild("Bar")
                     local Gradient = Bar and Bar:FindFirstChild("UIGradient")
-                    
                     if Gradient and Gradient.Offset.X == 1 then
                         IsAwakening = true
                         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
@@ -403,62 +364,36 @@ local Toggle = Tab:Toggle({
                     else
                         IsAwakening = false
                     end
-
-                    -- 2. TARGET ACQUISITION
                     if IsDodging then continue end 
-
                     local Target = GetBestTarget() 
-
-                    -- 3. SKILLS & MOVEMENT
                     if Target and Target:FindFirstChild("Humanoid") and Target:FindFirstChild("HumanoidRootPart") then
-                        
-                        -- SKILLS
-                        local S1 = FindSkillFrameByKey("1")
-                        if S1 then
-                            local img = S1:FindFirstChild("ImageLabel")
-                            if img and not img.Visible then AttemptSkill(Enum.KeyCode.One, "\026") end
+                        for _, k in pairs({"1", "2", "3"}) do
+                            local S = FindSkillFrameByKey(k)
+                            if S then
+                                local img = S:FindFirstChild("ImageLabel")
+                                if img and not img.Visible then 
+                                    AttemptSkill(k == "1" and Enum.KeyCode.One or k == "2" and Enum.KeyCode.Two or Enum.KeyCode.Three, "\026") 
+                                end
+                            end
                         end
-
-                        local S2 = FindSkillFrameByKey("2")
-                        if S2 then
-                            local img = S2:FindFirstChild("ImageLabel")
-                            if img and not img.Visible then AttemptSkill(Enum.KeyCode.Two, "\026") end
-                        end
-
-                        local S3 = FindSkillFrameByKey("3")
-                        if S3 then
-                            local img = S3:FindFirstChild("ImageLabel")
-                            if img and not img.Visible then AttemptSkill(Enum.KeyCode.Three, "\026") end
-                        end
-
                         local GearFrame = FindGearFrame()
                         if GearFrame then
                             local cd = GearFrame:FindFirstChild("Cooldown")
                             if cd and not cd.Visible then AttemptSkill(Enum.KeyCode.F, "\026") end
                         end
-
-                        -- ULTIMATE SKILL
                         local UltSkill = UltFrame:FindFirstChild("UltimateSkill")
                         if UltSkill then
                             local cd = UltSkill:FindFirstChild("Cooldown")
                             local grad = cd and cd:FindFirstChild("UIGradient")
-                            
-                            if grad and grad.Offset.Y >= 0.99 then
-                                AttemptSkill(Enum.KeyCode.X, "\026")
-                            end
+                            if grad and grad.Offset.Y >= 0.99 then AttemptSkill(Enum.KeyCode.X, "\026") end
                         end
-
-                        -- MOVEMENT
                         CurrentTarget = Target
-                        
                         local TargetRoot = Target.HumanoidRootPart
                         local MyChar = LocalPlayer.Character
                         local MyRoot = MyChar and MyChar:FindFirstChild("HumanoidRootPart")
-
                         if MyRoot then
                             local Settings = GetMobSettings(Target.Name)
                             local newCFrame
-
                             if Settings.Spin then
                                 local angle = tick() * Settings.Speed
                                 local offset = Vector3.new(math.cos(angle) * Settings.Distance, Settings.Height, math.sin(angle) * Settings.Distance)
@@ -467,10 +402,8 @@ local Toggle = Tab:Toggle({
                                 newCFrame = TargetRoot.CFrame * CFrame.new(0, Settings.Height, Settings.Distance)
                                 newCFrame = CFrame.new(newCFrame.Position, TargetRoot.Position)
                             end
-
                             MyRoot.CFrame = newCFrame
                             MyRoot.Velocity = Vector3.new(0,0,0)
-
                             local args = {{{ state = Enum.HumanoidStateType.PlatformStanding, hitcount = 2 }, "\f"}}
                             pcall(function() Remote:FireServer(unpack(args)) end)
                         end
@@ -478,11 +411,235 @@ local Toggle = Tab:Toggle({
                         CurrentTarget = nil
                     end
                 end
-                
-                -- Cleanup
                 if NoclipLoop then NoclipLoop:Disconnect() end
                 CleanupGlobalDodge()
             end)
         end
     end
 })
+
+local ReplayToggle = Tab:Toggle({
+    Title = "Auto Replay",
+    Desc = "Replays on Win/Fail (2s delay)",
+    Flag = "AutoReplayToggle",
+    Callback = function(state)
+        IsAutoReplay = state
+        if state then
+            task.spawn(function()
+                local hasFired = false
+                while IsAutoReplay do
+                    task.wait(0.5)
+                    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+                    if not pg then continue end
+                    local endScreen = pg:FindFirstChild("EndScreen")
+                    local failScreen = pg:FindFirstChild("EndScreenFail")
+                    local isEnd = (endScreen and endScreen.Enabled) or (failScreen and failScreen.Enabled)
+                    if isEnd then
+                        if not hasFired then
+                            hasFired = true
+                            task.wait(2)
+                            local args = {{1, "("}}
+                            pcall(function() Remote:FireServer(unpack(args)) end)
+                        end
+                    else
+                        hasFired = false
+                    end
+                end
+            end)
+        end
+    end
+})
+
+-- ==========================================
+-- SETTINGS TAB (Configuration System)
+-- ==========================================
+
+local SettingsTab = Window:Tab({ Title = "Settings" })
+local ConfigManager = Window.ConfigManager
+local ConfigFolder = "MySuperHub/RaZui Hub"
+
+-- Helper to safely get config files
+local function GetConfigs()
+    -- Ensure paths exist
+    if not isfolder("MySuperHub") then makefolder("MySuperHub") end
+    if not isfolder(ConfigFolder) then makefolder(ConfigFolder) end
+    
+    local files = {}
+    local success, list = pcall(listfiles, ConfigFolder)
+    if success and list then
+        for _, file in ipairs(list) do
+            -- Handle both full paths and relative paths
+            local fileName = file:match("([^/\\]+)%.json$")
+            if fileName then 
+                table.insert(files, fileName)
+            end
+        end
+    end
+    return files
+end
+
+local ConfigNameInput = ""
+local SelectedConfig = nil
+
+SettingsTab:Section({ Title = "Create New Config" })
+SettingsTab:Input({
+    Title = "Config Name",
+    Default = "Config1",
+    Callback = function(text) ConfigNameInput = text end
+})
+
+local ConfigDropdown -- Forward declare
+
+SettingsTab:Button({
+    Title = "Create & Save Config",
+    Callback = function()
+        if ConfigNameInput and ConfigNameInput ~= "" then
+            -- Create the config file directly to ensure it's saved correctly
+            local configPath = ConfigFolder .. "/" .. ConfigNameInput .. ".json"
+            if not isfile(configPath) then
+                writefile(configPath, "{}")  -- Create empty JSON file
+            end
+            
+            -- Use ConfigManager to save current settings
+            local cfg = ConfigManager:CreateConfig(ConfigNameInput)
+            cfg:Save()
+            
+            -- Refresh the dropdown with all configs
+            local allConfigs = GetConfigs()
+            if ConfigDropdown then 
+                ConfigDropdown:Refresh(allConfigs)
+                -- Select the newly created config
+                ConfigDropdown:SetValue(ConfigNameInput)
+                SelectedConfig = ConfigNameInput
+            end
+            
+            Window:Notify({Title = "Config", Content = "Created: " .. ConfigNameInput, Duration = 3})
+        else
+            Window:Notify({Title = "Error", Content = "Please enter a name first.", Duration = 3})
+        end
+    end
+})
+
+SettingsTab:Section({ Title = "Manage Configs" })
+
+ConfigDropdown = SettingsTab:Dropdown({
+    Title = "Select Config",
+    Values = GetConfigs(),
+    Value = nil,
+    Callback = function(val) SelectedConfig = val end
+})
+
+SettingsTab:Button({
+    Title = "Save to Selected",
+    Callback = function()
+        if SelectedConfig then
+            local cfg = ConfigManager:CreateConfig(SelectedConfig)
+            cfg:Save()
+            Window:Notify({Title = "Config", Content = "Saved: " .. SelectedConfig, Duration = 3})
+        else
+            Window:Notify({Title = "Error", Content = "Select a config first.", Duration = 3})
+        end
+    end
+})
+
+SettingsTab:Button({
+    Title = "Load Selected",
+    Callback = function()
+        if SelectedConfig then
+            local cfg = ConfigManager:CreateConfig(SelectedConfig)
+            cfg:Load()
+            Window:Notify({Title = "Config", Content = "Loaded: " .. SelectedConfig, Duration = 3})
+        else
+            Window:Notify({Title = "Error", Content = "Select a config first.", Duration = 3})
+        end
+    end
+})
+
+SettingsTab:Button({
+    Title = "Set as AutoLoad",
+    Callback = function()
+        if SelectedConfig then
+            writefile(ConfigFolder .. "/autoload.txt", SelectedConfig)
+            Window:Notify({Title = "Config", Content = "AutoLoad set to: " .. SelectedConfig, Duration = 3})
+        else
+            Window:Notify({Title = "Error", Content = "Select a config first.", Duration = 3})
+        end
+    end
+})
+
+-- UPDATED DELETE BUTTON
+SettingsTab:Button({
+    Title = "Delete Selected",
+    Callback = function()
+        if not SelectedConfig then
+            Window:Notify({Title = "Error", Content = "Select a config to delete.", Duration = 3})
+            return
+        end
+
+        local configPath = ConfigFolder .. "/" .. SelectedConfig .. ".json"
+        local autoLoadPath = ConfigFolder .. "/autoload.txt"
+
+        -- Check if it's the auto-load config
+        local isAutoLoad = isfile(autoLoadPath) and readfile(autoLoadPath) == SelectedConfig
+
+        -- Attempt to delete the config file
+        local success, err = pcall(function()
+            if isfile(configPath) then
+                delfile(configPath)
+            else
+                error("Config file not found.")
+            end
+        end)
+
+        if success then
+            -- If it was the autoload config, delete the autoload marker file
+            if isAutoLoad then
+                pcall(delfile, autoLoadPath)
+            end
+
+            Window:Notify({Title = "Config", Content = "Deleted: " .. SelectedConfig, Duration = 3})
+            
+            -- Reset selection
+            SelectedConfig = nil
+
+            -- THE FIX: Add a small wait to allow the file system to update
+            task.wait(0.1) 
+
+            -- Refresh the UI with the new list
+            if ConfigDropdown then
+                ConfigDropdown:Refresh(GetConfigs())
+                ConfigDropdown:SetValue(nil) -- Clear the selection in the dropdown
+            end
+        else
+            Window:Notify({Title = "Error", Content = "Failed to delete config: " .. tostring(err), Duration = 4})
+        end
+    end
+})
+
+SettingsTab:Button({
+    Title = "Refresh List",
+    Callback = function()
+        local allConfigs = GetConfigs()
+        if ConfigDropdown then 
+            ConfigDropdown:Refresh(allConfigs)
+        end
+        Window:Notify({Title = "Config", Content = "List refreshed", Duration = 2})
+    end
+})
+
+-- AutoLoad Logic
+task.spawn(function()
+    -- Ensure folder exists before reading
+    if not isfolder(ConfigFolder) then return end
+    
+    if isfile(ConfigFolder .. "/autoload.txt") then
+        local autoName = readfile(ConfigFolder .. "/autoload.txt")
+        if isfile(ConfigFolder .. "/" .. autoName .. ".json") then
+            -- Wait for UI init
+            task.wait(1) 
+            local cfg = ConfigManager:CreateConfig(autoName)
+            cfg:Load()
+            Window:Notify({Title = "AutoLoad", Content = "Loaded: " .. autoName, Duration = 5})
+        end
+    end
+end)
