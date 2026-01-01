@@ -1,46 +1,44 @@
-local PlaceId = game.PlaceId
+local PlaceID = game.PlaceId
 
-local GameGroups = {
-    Jujutsu Zero = {
-        PlaceIds = {128451689942376},
-        Script = "https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/55"
+local ScriptList = {
+
+    ["Jujutsu Zero"] = {
+        Ids = {128451689942376}, 
+        Url = "https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/55"
     },
-    Jujutsu Zero Raid = {
-        PlaceIds = {128451689942376},
-        Script = "https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/55-2"
+
+    ["Jujutsu Zero Raid"] = {
+        Ids = {128451689942376},
+        Url = "https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/55-2"
     },
-    
-    Anime Final Quest Raid = {
-        PlaceIds = {136683944064056, 127316980657672, 70768610276749, 113963744934619, 81100481912247},
-        Script = "https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/Finalquest"
-    },
+
+    ["Anime Final Quest Raid"] = {
+        Ids = {136683944064056, 127316980657672, 70768610276749, 113963744934619, 81100481912247},
+        Url = "https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/Finalquest"
+    }
+
 }
 
-local function LoadForPlace()
-    for name, data in pairs(GameGroups) do
-        for _, id in ipairs(data.PlaceIds) do
-            if id == PlaceId or id == "all" then
-                print("Loading: " .. name)
-                loadstring(game:HttpGet(data.Script))()
-                return true
-            end
+local scriptFound = false
+
+for name, config in pairs(ScriptList) do
+
+    if table.find(config.Ids, PlaceID) then
+        print("Loader: Found script for " .. name .. " (ID: " .. PlaceID .. ")")
+        
+        local success, err = pcall(function()
+            loadstring(game:HttpGet(config.Url))()
+        end)
+
+        if not success then
+            warn("Loader: Failed to load script. Error: " .. err)
         end
+        
+        scriptFound = true
+        break
     end
-    return false
 end
 
-if not LoadForPlace() then
-    local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
-
-    WindUI:Popup({
-    Title = "Game Not Supproted",
-    Content = "You are not in supported game",
-    Buttons = {
-        {
-            Title = "Continue",
-            Callback = function() end,
-            Variant = "Primary",
-        }
-    }
-    })
-end
+if not scriptFound then
+    warn("Loader: No script configured for Place ID: " .. PlaceID)
+end 
