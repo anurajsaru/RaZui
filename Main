@@ -8,7 +8,7 @@ local ScriptList = {
     },
 
     ["Jujutsu Zero Raid"] = {
-        Ids = {128451689942376},
+        Ids = {70619325627859},
         Url = "https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/55-2"
     },
 
