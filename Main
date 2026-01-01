@@ -1,4 +1,4 @@
--- Define the list of IDs that share the "Final Quest" script
+-- List of Place IDs that should run the "Final Quest" script
 local finalQuestIds = {
     136683944064056, 
     127316980657672, 
@@ -8,10 +8,10 @@ local finalQuestIds = {
 }
 
 if game.PlaceId == 28451689942376 then
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/Main"))()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/anurajsaru/RaZui/main/Main"))()
 
 elseif game.PlaceId == 70619325627859 then
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/55-2"))()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/anurajsaru/RaZui/main/55-2"))()
 
 elseif game.PlaceId == 100744519298647 then
     local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -28,9 +28,9 @@ elseif game.PlaceId == 100744519298647 then
         }
     })
 
--- This handles the list of IDs defined at the top
+-- THIS CHECKS THE LIST OF IDS
 elseif table.find(finalQuestIds, game.PlaceId) then
-    -- FIXED URL: Removed 'refs/heads' and fixed 'HttpsGet' to 'HttpGet'
+    -- FIXED: Changed HttpsGet to HttpGet and fixed the URL format
     loadstring(game:HttpGet("https://raw.githubusercontent.com/anurajsaru/RaZui/main/Final%20quest"))()
 
 else
@@ -38,7 +38,7 @@ else
 
     WindUI:Popup({
         Title = "Game Not Supported",
-        Content = "You are not in supported game",
+        Content = "You are not in a supported game",
         Buttons = {
             {
                 Title = "Continue",
