@@ -6,7 +6,7 @@ local supportedPlaceIds = {
     [81100481912247]  = true,
 }
 
-if game.PlaceId == 28451689942376 then
+if game.PlaceId == 128451689942376 then
     loadstring(game:HttpGet("https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/55"))()
 
 elseif game.PlaceId == 70619325627859 then
