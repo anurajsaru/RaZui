@@ -1,11 +1,3 @@
-local supportedPlaceIds = {
-    [136683944064056] = true,
-    [127316980657672] = true,
-    [70768610276749]  = true,
-    [113963744934619] = true,
-    [81100481912247]  = true,
-}
-
 if game.PlaceId == 128451689942376 then
     loadstring(game:HttpGet("https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/55"))()
 
@@ -27,8 +19,8 @@ elseif game.PlaceId == 100744519298647 then
     }
     })
 
-elseif supportedPlaceIds[game.PlaceId] then
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/Final%20quest"))()
+elseif game.PlaceId == 136683944064056 or game.PlaceId == 127316980657672 or game.PlaceId == 70768610276749 or game.PlaceId == 113963744934619 or game.PlaceId == 81100481912247 then
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/Finalquest"))()
 
 else
     local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
