@@ -1,5 +1,3 @@
-local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
-
 if game.PlaceId == 28451689942376 then
     loadstring(game:HttpGet("https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/Main"))()
 
@@ -7,6 +5,8 @@ elseif game.PlaceId == 70619325627859 then
     loadstring(game:HttpGet("https://raw.githubusercontent.com/anurajsaru/RaZui/refs/heads/main/55-2"))()
     
 else
+    local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
     WindUI:Popup({
     Title = "Game Not Supproted",
     Content = "You are not in supported game",
